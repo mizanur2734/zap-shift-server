@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 dotenv.config(); // Load .env variables
 
@@ -59,6 +59,25 @@ async function run() {
       }
     });
 
+    // GET: Get a single parcel by ID
+    app.get("/parcels/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const parcel = await parcelCollection.findOne(query);
+
+        if (!parcel) {
+          return res.status(404).json({ error: "Parcel not found" });
+        }
+
+        res.json(parcel);
+      } catch (error) {
+        console.error("Error fetching parcel by ID:", error);
+        res.status(500).json({ error: "Failed to retrieve parcel" });
+      }
+    });
+
     // post
     app.post("/parcels", async (req, res) => {
       try {
@@ -70,6 +89,32 @@ async function run() {
       } catch (error) {
         console.error("Error creating parcel:", error);
         res.status(500).json({ error: "Failed to create parcel" });
+      }
+    });
+
+    app.delete("/parcels/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const query = { _id: new ObjectId(id) };
+        const result = await parcelCollection.deleteOne(query);
+        res.send(result);
+      } catch (error) {
+        console.error("Error deleting parcel:", error);
+        res.status(500).json({ error: "Failed to delete parcel" });
+      }
+    });
+
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { amount } = req.body;
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount,
+          currency: "usd",
+        });
+        res.json({ clientSecret: paymentIntent.client_secret });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
       }
     });
 
