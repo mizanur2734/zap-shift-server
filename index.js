@@ -55,10 +55,19 @@ async function run() {
       try {
         const decoded = await admin.auth().verifyIdToken(token);
         req.decoded = decoded;
+        next();
       } catch (error) {
         return res.status(403).send({ message: "forbidden access" });
       }
+    };
 
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email };
+      const user = await usersCollection.findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "forbidden access" });
+      }
       next();
     };
 
@@ -104,7 +113,7 @@ async function run() {
       }
     });
 
-    app.patch("/users/:id/role", async (req, res) => {
+    app.patch("/users/:id/role", veryFBToken, verifyAdmin, async (req, res) => {
       const { id } = req.params;
       const { role } = req.body;
 
@@ -139,24 +148,33 @@ async function run() {
     });
 
     //
-    app.get("/parcels", veryFBToken, async (req, res) => {
+    app.get("/parcels", async (req, res) => {
       try {
-        const userEmail = req.query.email;
-
+        const { email, payment_status, delivery_status } = req.query;
         let query = {};
-        if (userEmail) {
-          query = { created_by: userEmail };
+        if (email) {
+          query = { created_by: email };
+        }
+
+        if (payment_status) {
+          query.payment_status = payment_status;
+        }
+
+        if (delivery_status) {
+          query.delivery_status = delivery_status;
         }
 
         const options = {
           sort: { createdAt: -1 }, // Newest first
         };
 
+        console.log("parcel query", req.query, query);
+
         const parcels = await parcelCollection.find(query, options).toArray();
-        res.json(parcels);
+        res.send(parcels);
       } catch (error) {
         console.error("Error fetching parcels:", error);
-        res.status(500).json({ error: "Failed to fetch parcels" });
+        res.status(500).send({ message: "Failed to get parcels" });
       }
     });
 
@@ -205,7 +223,7 @@ async function run() {
       }
     });
 
-    app.get("/riders/pending", async (req, res) => {
+    app.get("/riders/pending", veryFBToken, verifyAdmin, async (req, res) => {
       try {
         const pendingRiders = await ridersCollection
           .find({ status: "pending" })
@@ -217,11 +235,29 @@ async function run() {
       }
     });
 
-    app.get("/riders/active", async (req, res) => {
+    app.get("/riders/active", veryFBToken, verifyAdmin, async (req, res) => {
       const result = await ridersCollection
         .find({ status: "active" })
         .toArray();
       res.send(result);
+    });
+
+    app.get("/riders/available", async (req, res) => {
+      const { district } = req.query;
+
+      try {
+        const riders = await ridersCollection
+          .find({
+            district,
+            // status: { $in: ["approved", "active"] },
+            // work_status: "available",
+          })
+          .toArray();
+
+        res.send(riders);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to load riders" });
+      }
     });
 
     app.patch("/riders/:id/status", async (req, res) => {
@@ -255,6 +291,41 @@ async function run() {
         res.send(result);
       } catch (err) {
         res.status(500).send({ message: "Failed to update rider status" });
+      }
+    });
+
+    app.patch("/parcels/:id/assign", async (req, res) => {
+      const parcelId = req.params.id;
+      const { riderId, riderName, riderEmail } = req.body;
+
+      try {
+        // Update parcel
+        await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          {
+            $set: {
+              delivery_status: "rider_assigned",
+              assigned_rider_id: riderId,
+              assigned_rider_email: riderEmail,
+              assigned_rider_name: riderName,
+            },
+          }
+        );
+
+        // Update rider
+        await ridersCollection.updateOne(
+          { _id: new ObjectId(riderId) },
+          {
+            $set: {
+              work_status: "in_delivery",
+            },
+          }
+        );
+
+        res.send({ message: "Rider assigned" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Failed to assign rider" });
       }
     });
 
